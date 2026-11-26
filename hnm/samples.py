@@ -130,7 +130,7 @@ SAMPLE_REGISTRY = [
     },
     {
         "id": "sine_relief",
-        "label": "正弦浮雕（解析真值）",
+        "label": "正弦浮雕（解析真值 · 尺度回归）",
         "file": "sine_relief.png",
         "widthWorld": 1.0,
         "heightWorld": 1.0,
@@ -140,10 +140,11 @@ SAMPLE_REGISTRY = [
         "transfer": "linear",
         "boundary": "periodic",
         "description": "h=0.5+0.28·sin(6πU)cos(4πV)，周期边界，可逐像素核对解析法线。",
+        "analytic": {"kind": "sine", "amp": 0.28, "fx": 3, "fy": 2},
     },
     {
         "id": "plane_ramp",
-        "label": "平面斜坡（解析真值）",
+        "label": "平面斜坡（解析真值 · 尺度回归）",
         "file": "plane_ramp.png",
         "widthWorld": 2.0,
         "heightWorld": 1.0,
@@ -152,7 +153,8 @@ SAMPLE_REGISTRY = [
         "channel": "r",
         "transfer": "linear",
         "boundary": "clamp",
-        "description": "严格线性斜坡，中心差分内部应与解析法线完全一致；宽高尺度不等距。",
+        "description": "严格线性斜坡 H=0.12+0.72(0.62U+0.38V)，中心差分内部应与解析法线完全一致；宽高尺度不等距。",
+        "analytic": {"kind": "ramp", "amp": 0.72, "coefU": 0.62, "coefV": 0.38},
     },
     {
         "id": "boundary_step",
@@ -180,6 +182,35 @@ SAMPLE_REGISTRY = [
         "boundary": "clamp",
         "description": "同一线性斜坡经 sRGB 显示编码保存；必须用 sRGB EOTF 解码，不能直接当线性高度。",
     },
+    {
+        "id": "scale_ramp_stretched",
+        "label": "尺度回归 · 拉长一倍斜坡（同一纹素）",
+        "file": "scale_ramp_stretched.png",
+        "widthWorld": 2.0,
+        "heightWorld": 1.0,
+        "zScale": 0.5,
+        "unit": "m",
+        "channel": "r",
+        "transfer": "linear",
+        "boundary": "clamp",
+        "description": "纹素与镜像样例逐位相同；物理宽度 2m = 基础 1m 表面拉长一倍，法线应更平。",
+        "analytic": {"kind": "ramp", "amp": 0.8, "coefU": 1.0, "coefV": 0.0},
+    },
+    {
+        "id": "scale_ramp_mirrored",
+        "label": "尺度回归 · 镜像 UV 反向斜坡",
+        "file": "scale_ramp_mirrored.png",
+        "widthWorld": 1.0,
+        "heightWorld": 1.0,
+        "zScale": 0.5,
+        "unit": "m",
+        "channel": "r",
+        "transfer": "linear",
+        "boundary": "clamp",
+        "description": "拉长样例的纹素经镜像 UV 映射后的材料空间结果（列序反向）。严格的"
+        "“完全相同纹素 + 列反转”不变量由 normal_validation.verify_stretch_and_mirror 证明。",
+        "analytic": {"kind": "ramp", "amp": 0.8, "coefU": -1.0, "coefV": 0.0},
+    },
 ]
 
 ISLAND_REGISTRY = {
@@ -206,6 +237,18 @@ ISLAND_REGISTRY = {
 }
 
 
+def scale_ramp_texture(n: int = 256) -> np.ndarray:
+    """仅沿列变化的线性斜坡纹理（纹素值约 0.1..0.9），用于尺度回归样例。
+
+    拉长岛与镜像岛都直接使用**这份相同的纹素**：拉长靠物理宽度×2，镜像靠
+    flip_cols/列反转，因此两者在纹素坐标里逐位相同。
+    """
+    u = (np.arange(n, dtype=np.float64) + 0.5) / n
+    v = (np.arange(n, dtype=np.float64) + 0.5) / n
+    U, V = np.meshgrid(u, v)
+    return np.clip(0.1 + 0.8 * U, 0.0, 1.0)
+
+
 def build_all_assets(asset_dir: Path = ASSET_DIR) -> dict:
     asset_dir.mkdir(parents=True, exist_ok=True)
     written = []
@@ -215,6 +258,7 @@ def build_all_assets(asset_dir: Path = ASSET_DIR) -> dict:
         "sine_relief.png": sine_field(256),
         "boundary_step.png": step_field(128),
         "fbm_rock.png": fbm_field(512),
+        "scale_ramp_stretched.png": scale_ramp_texture(256),
     }
     linear_ramp = ramp_field(256)
     # 用 sRGB OETF 编码制造“显示编码后”的斜坡资产
@@ -224,6 +268,8 @@ def build_all_assets(asset_dir: Path = ASSET_DIR) -> dict:
         1.055 * np.power(np.clip(linear_ramp, 0, 1), 1 / 2.4) - 0.055,
     )
     fields["srgb_encoded_ramp.png"] = encoded
+    # 镜像岛：同一纹素逐位相同，仅列序反转（材料坐标里是反向 UV 岛）
+    fields["scale_ramp_mirrored.png"] = scale_ramp_texture(256)[:, ::-1]
 
     for name, h in fields.items():
         p = asset_dir / name

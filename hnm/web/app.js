@@ -326,6 +326,90 @@ async function drawSingleVectors() {
   }
 }
 
+/* ---------------- 尺度一致性验收（图形入口） ---------------- */
+
+const verify = {
+  result: null,
+  dec: null,
+  lit: new LightCanvas($('s-verify-litcanvas')),
+};
+
+async function runVerify() {
+  const btn = $('s-verify-run');
+  const fb = $('s-verify-feedback');
+  clearFeedback(fb);
+  btn.disabled = true;
+  try {
+    const params = collectSingleParams();
+    // 用真实材质侧光方向：方位=跨坡度方向，低仰角
+    params.light = { azimuth: parseFloat($('l-az').value), elevation: 15.0 };
+    const d = await api('/api/verify', params);
+    verify.result = d;
+
+    const badge = $('s-verify-badge');
+    const v = d.verdict || {};
+    badge.textContent = v.passed ? '验收 PASS' : '验收 FAIL';
+    badge.className = `badge ${v.passed ? 'ok' : 'fail'}`;
+    const ref = $('s-verify-ref');
+    if (d.referenceAvailable) {
+      ref.textContent = '独立解析参照 ✓';
+      ref.className = 'badge ok';
+    } else {
+      ref.textContent = '无解析真值 · 仅可证范围';
+      ref.className = 'badge warn';
+    }
+
+    renderVerifyMetrics(d);
+
+    // 光照必须用“测得法线”：从内核交付的法线 PNG 逐像素读回后着色
+    verify.dec = await decodeNormalDataUrl(d.normalPng, [
+      d.convention.signs.x, d.convention.signs.y, d.convention.signs.z,
+    ]);
+    verify.lit.setDecoded(verify.dec);
+    verify.lit.render({
+      az: params.light.azimuth, el: params.light.elevation, ambient: 0.22, spec: 0.0,
+    });
+    $('s-verify-lit-cap').textContent =
+      `测得法线 · 侧光 az=${params.light.azimuth}° el=15°（逐像素解码法线参与着色）`;
+
+    if (!v.passed) {
+      setFeedback(fb, 'error', v.note || '法线方向或渲染响应与独立参照不符，见下方角差与响应差。');
+    } else if (!d.referenceAvailable) {
+      setFeedback(fb, 'info', v.note);
+    }
+  } catch (err) {
+    const msg = err.message || String(err);
+    setFeedback(fb, 'error', `验收失败：${msg}`);
+    $('s-verify-badge').textContent = '验收错误';
+    $('s-verify-badge').className = 'badge fail';
+    markInvalid(err.field);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderVerifyMetrics(d) {
+  const v = d.verdict || {}, sp = d.slopePaths || {};
+  const rows = [];
+  rows.push(['裁决', v.passed ? 'PASS' : 'FAIL']);
+  if (d.referenceAvailable && v.angle) {
+    rows.push(['法线角差 max / mean', `${v.angle.max.toFixed(3)}° / ${v.angle.mean.toFixed(3)}°`]);
+    rows.push(['角差容差（8-bit 读回）', `${v.angleToleranceDeg}°`]);
+    rows.push(['斜光响应差 mean / max', `${v.grazingMeanAbsDelta.toFixed(4)} / ${v.grazingMaxAbsDelta.toFixed(4)}`]);
+    rows.push(['响应差容差 mean / max', `${v.grazingMeanTolerance} / ${v.grazingMaxTolerance}`]);
+    rows.push(['斜光平均响应（测得 vs 参照）', `${v.grazingResponse.toFixed(4)} / ${v.grazingReference.toFixed(4)}`]);
+  } else {
+    rows.push(['参照', '无解析真值：仅证明编码往返与两写法一致']);
+    rows.push(['编码往返最大角误差', `${(d.encoding?.maxAngularErrorDeg ?? 0).toFixed(3)}°`]);
+  }
+  rows.push(['切线基内 vs 真实长度', `渲染响应平均差 ${sp.tangentVsTrueLengthRenderMeanAbsDelta?.toFixed(6)}（${sp.agree ? '一致' : '不一致'}）`]);
+  if (v.unitMismatch) {
+    rows.push(['样例声明尺度自洽', v.unitMismatch.consistent ? '是' : '否（仅提示，非硬失败）']);
+  }
+  $('s-verify-metrics').innerHTML = rows.map(([k, val]) =>
+    `<div class="metric"><span>${k}</span><span>${val}</span></div>`).join('');
+}
+
 /* ---------------- 双岛模式 ---------------- */
 
 const islands = {
@@ -642,8 +726,15 @@ function bindSingle() {
       $('l-amb-val').textContent = parseFloat($('l-amb').value).toFixed(2);
       $('l-spec-val').textContent = parseFloat($('l-spec').value).toFixed(2);
       single.light.render(currentLightOpts());
+      if (verify.dec) {
+        verify.lit.render({
+          az: parseFloat($('l-az').value), el: 15.0, ambient: 0.22, spec: 0.0,
+        });
+      }
     });
   });
+
+  $('s-verify-run').addEventListener('click', runVerify);
 
   $('s-lightcanvas').addEventListener('mousemove', (ev) => {
     if (!single.dec) return;

@@ -263,6 +263,130 @@ def join_islands(params: dict) -> dict:
     return payload
 
 
+def verify_scaling(params: dict) -> dict:
+    """对一次真实“高度→法线”转换做独立尺度一致性复核。
+
+    返回内容：
+      * measured normal PNG（由内核编码，UI 与真实渲染都用它）；
+      * grazingPng：用**从 PN G 读回的法线**参与侧光着色（不是重算法线）；
+      * angle / 渲染响应的独立参照结果（reference 来自解析式，非内核中间量）；
+      * 两条坡度写法（切线基 vs 真实长度）的角差与渲染差；
+      * referenceAvailable=False 时只给出“可证范围”，不宣称绝对正确。
+
+    该入口供纹理制作界面的“尺度一致性验收”按钮调用；命令行仅做辅助。
+    """
+    from . import normal_validation as nv
+
+    rgba = load_source_rgba(params.get("sampleId"), params.get("image"))
+    h = extract_linear_height(
+        rgba,
+        channel=params.get("channel", "r"),
+        transfer=params.get("transfer", "linear"),
+        gamma=_num(params, "gamma", 2.2),
+        invert=bool(params.get("invert", False)),
+    )
+    rows, cols = h.shape
+    scale = SurfaceScale(
+        width_world=_num(params, "widthWorld", 1.0),
+        height_world=_num(params, "heightWorld", 1.0),
+        z_per_height_unit=_num(params, "zScale", 0.05),
+        unit=params.get("unit", "m") or "m",
+        stretch_x=_num(params, "stretchX", 1.0),
+        stretch_y=_num(params, "stretchY", 1.0),
+    )
+    boundary = params.get("boundary", "clamp")
+    method = params.get("method", "central")
+    result = height_to_normals(h, scale, boundary=boundary, method=method)
+    n_kernel = result["normals"]
+
+    convention_id = params.get("convention", "opengl")
+    fx = bool(params.get("flipX", False))
+    fy = bool(params.get("flipY", False))
+    fz = bool(params.get("flipZ", False))
+    signs = resolve_signs(convention_id, fx, fy, fz)
+
+    # 编码成真实纹素，再从纹素解码 = “测得法线”。UI 与侧光都只用这一份。
+    err = encoding_error_metrics(n_kernel, signs)
+    normal_png = err.pop("encoded")
+    measured = decode_normal_rgb(normal_png, signs, True)
+
+    light = params.get("light") or {}
+    grazing = nv.render_lit(
+        measured,
+        azimuth_deg=float(light.get("azimuth", 150.0)),
+        elevation_deg=float(light.get("elevation", 15.0)),
+    )
+    grazing_png = np.uint8(np.clip(grazing, 0.0, 1.0) * 255.0 + 0.5)
+    # 侧光着色预览（真实材质：灰底乘光照响应）
+    base = np.array([0.72, 0.74, 0.78])
+    lit_rgb = np.uint8(np.clip(grazing[:, :, None] * base.reshape(1, 1, 3), 0, 1) * 255 + 0.5)
+
+    # 两条坡度写法（只在可重复网格上并列，拉伸/单位改变时区分谁动尺度）
+    dx, dy = result["dx"], result["dy"]
+    sx_tan, sy_tan = nv.slope_in_tangent_basis(h, dx, dy, scale.z_per_height_unit, boundary)
+    sx_len, sy_len = nv.slope_by_true_length(h, dx, dy, scale.z_per_height_unit, boundary)
+    from .kernel import normals_from_slopes
+
+    n_tan = normals_from_slopes(sx_tan, sy_tan)
+    n_len = normals_from_slopes(sx_len, sy_len)
+    grazing_tan = nv.render_lit(n_tan, float(light.get("azimuth", 150.0)), float(light.get("elevation", 15.0)))
+    grazing_len = nv.render_lit(n_len, float(light.get("azimuth", 150.0)), float(light.get("elevation", 15.0)))
+    path_render_delta = float(np.mean(np.abs(grazing_tan - grazing_len)))
+
+    # 独立参照（解析式）；与内核中间量无关。
+    # 用调用方声明的世界宽高×真实拉伸，与内核所见的几何一致；
+    # 单位/尺度是否误标由 unitConsistency 单独判定（见下）。
+    expected = nv.reference_normals_for_sample(
+        params.get("sampleId") or "", rows, cols,
+        scale.z_per_height_unit,
+        scale.width_world, scale.height_world,
+        stretch_x=scale.stretch_x, stretch_y=scale.stretch_y,
+    )
+    reference_available = expected is not None
+    unit_consistency = nv.sample_unit_consistency(
+        params.get("sampleId") or "",
+        scale.width_world, scale.height_world, scale.stretch_x, scale.stretch_y,
+    )
+    if reference_available:
+        verdict = nv.verify_normals_against_reference(
+            measured, expected, boundary, quantized=True
+        )
+        # 与注册表真值的自洽性仅作信息提示：重设覆盖范围/单位缩放在真实几何下
+        # 仍然合法，是否“伪凹凸”由法线对真实表面的角差与渲染响应决定。
+        verdict["unitMismatch"] = unit_consistency
+    else:
+        # 旧资源无解析真值：只能给出可证范围（编码往返保真 + 两写法一致），
+        # 不宣称绝对法线正确。
+        roundtrip = err.get("maxAngularErrorDeg", 0.0)
+        verdict = {
+            "passed": bool(roundtrip < 1.0 and path_render_delta < 1e-6),
+            "angle": None,
+            "grazingMeanAbsDelta": None,
+            "angleToleranceDeg": None,
+            "quantized": True,
+            "note": "无解析真值：仅证明编码往返保真与两条坡度写法一致，不能证明绝对法线正确。",
+        }
+
+    return {
+        "ok": True,
+        "width": cols,
+        "height": rows,
+        "normalPng": png_data_url(normal_png),
+        "measuredLitPng": png_data_url(lit_rgb),
+        "convention": convention_metadata(convention_id, fx, fy, fz),
+        "scale": result["scaleInfo"],
+        "stats": slope_strength_stats(result),
+        "encoding": err,
+        "referenceAvailable": bool(reference_available),
+        "verdict": verdict,
+        "slopePaths": {
+            "tangentVsTrueLengthRenderMeanAbsDelta": path_render_delta,
+            "agree": bool(path_render_delta < 1e-6),
+        },
+        "grazing": light,
+    }
+
+
 def _json_profile(p: dict) -> dict:
     # 全量剖面可能 512 点，直接给前端；保留数值精度
     return {k: v for k, v in p.items()}

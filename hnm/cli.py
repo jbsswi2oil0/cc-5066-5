@@ -3,6 +3,10 @@
 用法：
   python -m hnm.cli assets     # 只生成 assets/source 源贴图
   python -m hnm.cli all        # 资产 + outputs 全部交付物（默认）
+
+尺度一致性验收的**图形入口**在单图页第 6 个结果页签「尺度一致性验收」：
+切换样例、手动调节高度标尺与真实拉伸后点击运行即可。本命令行仅辅助产出
+同一份证据（outputs/verify/evidence.json 与斜光留证图），不是主入口。
 """
 from __future__ import annotations
 
@@ -256,6 +260,85 @@ def generate_island_outputs(report: dict) -> None:
     }
 
 
+def generate_verification_outputs(report: dict) -> None:
+    """尺度一致性验收：保留斜光图 + 结构化证据，并落盘到 outputs/verify。"""
+    from . import normal_validation as nv
+    from .kernel import decode_normal_rgb
+
+    out_dir = OUTPUT_DIR / "verify"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    result = nv.run_all_verification()
+
+    # 斜坡：正确法线侧光 / 故意翻绿轴的侧光，作为“斜光图能否跨缝/暴露坏结果”的
+    # 可执行证据，同时保存同一表面的正确与错误渲染。
+    hA, hB, truth = island_pair_fields(256)
+    z = float(truth["zScale"])
+    from .islands import IslandSpec, build_merged_height
+    from .kernel import normals_from_physical_height
+
+    a = IslandSpec(hA, 0.5, 0.5, z, label="A")
+    merged_ok = build_merged_height(a, IslandSpec(hB, 0.5, 0.5, z, label="B"))
+    n_ok = normals_from_physical_height(merged_ok["heightWorld"], merged_ok["px"], merged_ok["py"])["normals"]
+    signs = resolve_signs("opengl")
+
+    grazing = nv.render_lit(n_ok, 0.0, 12.0)
+    save_png(_gray01(grazing), out_dir / "seam_grazing_correct.png")
+
+    # 错误标尺：接缝处出现亮度阶跃
+    merged_bad = build_merged_height(a, IslandSpec(hB, 0.5, 0.5, 2.0 * z, label="B"))
+    n_bad = normals_from_physical_height(merged_bad["heightWorld"], merged_bad["px"], merged_bad["py"])["normals"]
+    save_png(_gray01(nv.render_lit(n_bad, 0.0, 12.0)), out_dir / "seam_grazing_wrong_scale.png")
+
+    # 故意反转一个轴：编码后把绿通道翻转再解码，斜光图应明显不同
+    tex = encode_normal_rgb(n_ok, signs).copy()
+    tex[..., 1] = 255 - tex[..., 1]
+    n_flip = decode_normal_rgb(tex, signs, True)
+    save_png(_gray01(nv.render_lit(n_flip, 0.0, 12.0)), out_dir / "seam_grazing_axis_flipped.png")
+
+    # 单斜坡：拉长 vs 镜像，两种纹理同纹素
+    from .samples import SAMPLE_REGISTRY, ASSET_DIR
+    from .images import load_rgba
+    from .transfer import extract_linear_height
+
+    for sid, tag in (("scale_ramp_stretched", "stretch"),
+                     ("scale_ramp_mirrored", "mirror")):
+        e = next(x for x in SAMPLE_REGISTRY if x["id"] == sid)
+        rgba = load_rgba(ASSET_DIR / e["file"])
+        h = extract_linear_height(rgba, "r", "linear")
+        res = height_to_normals(
+            h, SurfaceScale(e["widthWorld"], e["heightWorld"], e["zScale"], e["unit"]),
+            boundary="clamp",
+        )
+        save_png(
+            _gray01(nv.render_lit(res["normals"], nv.GRAZING_AZIMUTH_DEG, nv.GRAZING_ELEVATION_DEG)),
+            out_dir / f"ramp_{tag}_grazing.png",
+        )
+
+    # 证据落盘（可被 UI/测试对照执行）
+    evidence_path = out_dir / "evidence.json"
+    evidence_path.write_text(
+        json.dumps(result, ensure_ascii=False, indent=2, default=_json_default),
+        encoding="utf-8",
+    )
+    report["scaleVerification"] = {
+        "passed": result["passed"],
+        "evidence": result["evidence"],
+        "cases": result["cases"],
+        "artifacts": {
+            "seamGrazingCorrect": "outputs/verify/seam_grazing_correct.png",
+            "seamGrazingWrongScale": "outputs/verify/seam_grazing_wrong_scale.png",
+            "seamGrazingAxisFlipped": "outputs/verify/seam_grazing_axis_flipped.png",
+            "rampStretchGrazing": "outputs/verify/ramp_stretch_grazing.png",
+            "rampMirrorGrazing": "outputs/verify/ramp_mirror_grazing.png",
+            "evidence": "outputs/verify/evidence.json",
+        },
+    }
+
+
+def _gray01(x: np.ndarray) -> np.ndarray:
+    return np.uint8(np.clip(x, 0.0, 1.0) * 255.0 + 0.5)
+
+
 def _gray_world(h: np.ndarray) -> np.ndarray:
     lo, hi = float(h.min()), float(h.max())
     g = (h - lo) / max(hi - lo, 1e-12)
@@ -278,6 +361,7 @@ def main(argv=None) -> None:
     analytic_self_check(report)
     generate_sample_outputs(report)
     generate_island_outputs(report)
+    generate_verification_outputs(report)
 
     report_path = OUTPUT_DIR / "report.json"
     report_path.write_text(
@@ -296,6 +380,16 @@ def main(argv=None) -> None:
     )
     ck = report["islands"]["correctJoin"]["checks"]
     print(f"[cli] 双岛物理合并: passed={ck['passed']}")
+    sv = report["scaleVerification"]["evidence"]
+    print(
+        "[cli] 尺度一致验证: passed=%s 角差=%.3f°/%.3f° 翻轴检出=%s 单位伪凹凸检出=%s 跨缝(好/坏)=%.2f/%.2f"
+        % (
+            report["scaleVerification"]["passed"],
+            sv["clampRampAngleMaxDeg"], sv["periodicInteriorAngleMaxDeg"],
+            sv["axisFlipDetected"], sv["unitPseudoBumpDetected"],
+            sv["correctSeamRatio"], sv["wrongScaleSeamRatio"],
+        )
+    )
 
 
 if __name__ == "__main__":

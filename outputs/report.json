@@ -45,7 +45,7 @@
       "description": "6 阶分形噪声生成的岩面高度，线性灰度数据。"
     },
     "sine_relief": {
-      "label": "正弦浮雕（解析真值）",
+      "label": "正弦浮雕（解析真值 · 尺度回归）",
       "source": "assets/source/sine_relief.png",
       "normals": {
         "opengl": "outputs/normals/sine_relief_opengl.png",
@@ -74,7 +74,7 @@
       "description": "h=0.5+0.28·sin(6πU)cos(4πV)，周期边界，可逐像素核对解析法线。"
     },
     "plane_ramp": {
-      "label": "平面斜坡（解析真值）",
+      "label": "平面斜坡（解析真值 · 尺度回归）",
       "source": "assets/source/plane_ramp.png",
       "normals": {
         "opengl": "outputs/normals/plane_ramp_opengl.png",
@@ -100,7 +100,7 @@
         "rmseAngularErrorDeg": 0.2165070456469045,
         "maxComponentQuantization": 0.0039215686274509665
       },
-      "description": "严格线性斜坡，中心差分内部应与解析法线完全一致；宽高尺度不等距。"
+      "description": "严格线性斜坡 H=0.12+0.72(0.62U+0.38V)，中心差分内部应与解析法线完全一致；宽高尺度不等距。"
     },
     "boundary_step": {
       "label": "边界台阶（周期/非周期）",
@@ -160,6 +160,64 @@
       },
       "description": "同一线性斜坡经 sRGB 显示编码保存；必须用 sRGB EOTF 解码，不能直接当线性高度。",
       "transferWarning": "已额外输出 srgb_ramp_naive_no_decode_opengl.png 作为错误示范：把 sRGB 显示编码值直接当线性高度，暗部梯度被夸大。"
+    },
+    "scale_ramp_stretched": {
+      "label": "尺度回归 · 拉长一倍斜坡（同一纹素）",
+      "source": "assets/source/scale_ramp_stretched.png",
+      "normals": {
+        "opengl": "outputs/normals/scale_ramp_stretched_opengl.png",
+        "directx": "outputs/normals/scale_ramp_stretched_directx.png"
+      },
+      "litPreview": "outputs/previews/scale_ramp_stretched_lit315.png",
+      "scale": {
+        "rows": 256,
+        "cols": 256,
+        "unit": "m",
+        "widthWorld": 2.0,
+        "heightWorld": 1.0,
+        "zPerHeightUnit": 0.5,
+        "stretchX": 1.0,
+        "stretchY": 1.0,
+        "pixelPitchX": 0.0078125,
+        "pixelPitchY": 0.00390625,
+        "texelAspect": 2.0
+      },
+      "encodingErrorOpenGL": {
+        "maxAngularErrorDeg": 0.31432103775223985,
+        "meanAngularErrorDeg": 0.3004040255876224,
+        "rmseAngularErrorDeg": 0.30087481462509585,
+        "maxComponentQuantization": 0.0039215686274509665
+      },
+      "description": "纹素与镜像样例逐位相同；物理宽度 2m = 基础 1m 表面拉长一倍，法线应更平。"
+    },
+    "scale_ramp_mirrored": {
+      "label": "尺度回归 · 镜像 UV 反向斜坡",
+      "source": "assets/source/scale_ramp_mirrored.png",
+      "normals": {
+        "opengl": "outputs/normals/scale_ramp_mirrored_opengl.png",
+        "directx": "outputs/normals/scale_ramp_mirrored_directx.png"
+      },
+      "litPreview": "outputs/previews/scale_ramp_mirrored_lit315.png",
+      "scale": {
+        "rows": 256,
+        "cols": 256,
+        "unit": "m",
+        "widthWorld": 1.0,
+        "heightWorld": 1.0,
+        "zPerHeightUnit": 0.5,
+        "stretchX": 1.0,
+        "stretchY": 1.0,
+        "pixelPitchX": 0.00390625,
+        "pixelPitchY": 0.00390625,
+        "texelAspect": 1.0
+      },
+      "encodingErrorOpenGL": {
+        "maxAngularErrorDeg": 0.31432103775223985,
+        "meanAngularErrorDeg": 0.31142767452043996,
+        "rmseAngularErrorDeg": 0.31143687058596303,
+        "maxComponentQuantization": 0.0039215686274509665
+      },
+      "description": "拉长样例的纹素经镜像 UV 映射后的材料空间结果（列序反向）。严格的“完全相同纹素 + 列反转”不变量由 normal_validation.verify_stretch_and_mirror 证明。"
     }
   },
   "islands": {
@@ -1270,5 +1328,131 @@
       "chart": "outputs/islands/seam_profile_wrong_flip.png"
     },
     "relativePreview": "outputs/islands/relative_merge_normal.png"
+  },
+  "scaleVerification": {
+    "passed": true,
+    "evidence": {
+      "clampRampPassed": true,
+      "clampRampAngleMaxDeg": 2.539544733012573e-13,
+      "axisFlipDetected": true,
+      "axisFlipAngleMaxDeg": 15.630279295757697,
+      "unitMismatchDetected": true,
+      "roundtripFidelityOk": true,
+      "periodicInteriorAngleMaxDeg": 0.3549775532257992,
+      "periodicBoundaryDistinct": true,
+      "boundaryPolicyDeltaDeg": 2.0701875781633574,
+      "stretchAngleMaxDeg": 3.81666561775622e-14,
+      "mirrorAngleMaxDeg": 6.997220299219738e-14,
+      "stretchHalfEnergy": true,
+      "renderPathDelta": 0.0,
+      "renderPathsAgree": true,
+      "detailIsExplained": true,
+      "unitPseudoBumpDetected": true,
+      "unitInvariant": true,
+      "ndl1m": 0.6497658089618066,
+      "ndl2m": 0.5459208929060084,
+      "ndlCmRelabel": 0.8773243065350846,
+      "seamJumpCorrect": 0.009179065749167326,
+      "seamJumpWrongScale": 0.06687515160487192,
+      "correctSeamRatio": 1.1692961283778633,
+      "wrongScaleSeamRatio": 3.805281958475924,
+      "correctCrossesSeam": true,
+      "wrongScaleBreaksSeam": true,
+      "relativeOnlyProvableRange": true
+    },
+    "cases": {
+      "clampRamp": {
+        "name": "clamp_ramp",
+        "passed": true,
+        "angle": {
+          "max": 2.539544733012573e-13,
+          "mean": 6.266478339636964e-14,
+          "p95": 1.1459694715038997e-13
+        },
+        "roundtripAngleMax": 0.2636341626074261,
+        "roundtripFidelityOk": true,
+        "slopeAbsErrTangent": 2.5118795932144167e-15,
+        "slopeAbsErrTrueLength": 2.5118795932144167e-15,
+        "slopePathDelta": 0.0,
+        "axisFlipAngleMax": 15.630279295757697,
+        "axisFlipDetected": true,
+        "unitSlopeRelMismatch": 99.00000000000094,
+        "unitMismatchDetected": true
+      },
+      "periodicBoundary": {
+        "name": "periodic_boundary",
+        "passed": true,
+        "interior": {
+          "max": 0.3549775532257992,
+          "mean": 0.18230304213853413,
+          "p95": 0.33189411085753634
+        },
+        "interiorOk": true,
+        "clampEdgeAngleMax": 2.0968532981097683,
+        "periodicEdgeAngleMax": 0.35497755322580543,
+        "boundaryPolicyDeltaDeg": 2.0701875781633574,
+        "boundaryDistinct": true
+      },
+      "stretchMirror": {
+        "name": "stretch_and_mirror",
+        "stretchAngle": {
+          "max": 3.81666561775622e-14,
+          "mean": 1.3172797305728068e-14,
+          "p95": 3.81666561775622e-14
+        },
+        "mirrorAngle": {
+          "max": 6.997220299219738e-14,
+          "mean": 2.3059021440610507e-14,
+          "p95": 6.997220299219738e-14
+        },
+        "energyStretch": 0.20000000000000004,
+        "energyMirror": 0.4000000000000001,
+        "stretchHalfEnergy": true,
+        "tangentPathAngleMax": 3.81666561775622e-14,
+        "trueLengthPathAngleMax": 3.81666561775622e-14,
+        "renderPathDelta": 0.0,
+        "renderPathsAgree": true
+      },
+      "unitVsDetail": {
+        "name": "unit_vs_detail",
+        "unitInvariant": true,
+        "unitInvarianceAngleMax": 0.0,
+        "detailIsExplained": true,
+        "detail2mAngle": {
+          "max": 3.81666561775622e-14,
+          "mean": 1.3172797305728068e-14,
+          "p95": 3.81666561775622e-14
+        },
+        "unitPseudoBumpDetected": true,
+        "unitPseudoBumpAngle": {
+          "max": 66.76649432948355,
+          "mean": 66.76649432948352,
+          "p95": 66.76649432948355
+        },
+        "ndl1m": 0.6497658089618066,
+        "ndl2m": 0.5459208929060084,
+        "ndlCmRelabel": 0.8773243065350846
+      },
+      "crossSeamGrazing": {
+        "name": "cross_seam_grazing",
+        "seamJumpCorrect": 0.009179065749167326,
+        "seamJumpWrongScale": 0.06687515160487192,
+        "correctSeamRatio": 1.1692961283778633,
+        "wrongScaleSeamRatio": 3.805281958475924,
+        "correctCrossesSeam": true,
+        "wrongScaleBreaksSeam": true,
+        "relativePhysical": false,
+        "relativeOnlyProvableRange": true,
+        "relativeSeamRatio": 1.1692961283778633
+      }
+    },
+    "artifacts": {
+      "seamGrazingCorrect": "outputs/verify/seam_grazing_correct.png",
+      "seamGrazingWrongScale": "outputs/verify/seam_grazing_wrong_scale.png",
+      "seamGrazingAxisFlipped": "outputs/verify/seam_grazing_axis_flipped.png",
+      "rampStretchGrazing": "outputs/verify/ramp_stretch_grazing.png",
+      "rampMirrorGrazing": "outputs/verify/ramp_mirror_grazing.png",
+      "evidence": "outputs/verify/evidence.json"
+    }
   }
 }

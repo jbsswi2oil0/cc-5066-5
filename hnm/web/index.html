@@ -150,6 +150,7 @@
           <button class="rtab" data-rtab="light">表面光照预览</button>
           <button class="rtab" data-rtab="vectors">法线方向场</button>
           <button class="rtab" data-rtab="metrics">尺度 / 误差指标</button>
+          <button class="rtab" data-rtab="verify">尺度一致性验收</button>
         </div>
 
         <div class="rpanel active" data-rpanel="normal">
@@ -193,6 +194,27 @@
 
         <div class="rpanel" data-rpanel="metrics">
           <div id="s-metrics" class="metrics"></div>
+        </div>
+
+        <div class="rpanel" data-rpanel="verify">
+          <div class="badge-row">
+            <button id="s-verify-run" class="primary" type="button">运行尺度一致性验收</button>
+            <span id="s-verify-badge" class="badge">尚未验收</span>
+            <span id="s-verify-ref" class="badge">—</span>
+          </div>
+          <p class="hint">
+            用<b>从法线 PNG 读回的法线</b>参与侧光着色（不是重新算法线）。期望值由独立解析式推导，
+            不借用内核中间量。无解析真值的旧资源只给出“可证范围”（编码往返 + 两条坡度写法一致），
+            不宣称绝对法线正确。
+          </p>
+          <div class="verify-grid">
+            <div>
+              <div class="imgframe dark"><canvas id="s-verify-litcanvas"></canvas></div>
+              <div class="mono hover-readout" id="s-verify-lit-cap">测得法线 · 侧光渲染</div>
+            </div>
+            <div id="s-verify-metrics" class="metrics"></div>
+          </div>
+          <div id="s-verify-feedback" class="feedback" role="alert" hidden></div>
         </div>
       </section>
     </div>
@@ -341,6 +363,20 @@
           <pre>python3 -m unittest discover -s tests</pre>
           <p>真实 PNG 贴图、光照预览与剖面图由 <code>python3 -m hnm.cli all</code> 生成到
           <code>assets/</code> 与 <code>outputs/</code>，汇总数值见 <code>outputs/report.json</code>。</p>
+        </article>
+        <article>
+          <h3>7. 尺度一致性验收（图形入口）</h3>
+          <p>单图页第 6 个结果页签「尺度一致性验收」即此功能的图形入口：切换内置样例、手动调节
+          高度标尺 zScale 与真实拉伸后点击“运行尺度一致性验收”。验收用<b>从法线 PNG 读回的法线</b>
+          参与侧光着色，期望值由独立解析式推导（不借用内核中间量），并同时给出：
+          法线角差、逐像素斜光渲染响应差、两条坡度写法（切线基内求斜率 vs 按真实长度作差）的一致性。</p>
+          <p>同样纹素斜坡可对照“模型拉长一倍”与“镜像 UV 反向”；重设纹素密度/轴向可区分“真实细节变化”
+          与“换单位伪凹凸”；故意反转一个轴会被角差与渲染响应双重点名。缺解析真值的旧资源只报可证范围
+          （编码往返保真 + 两条坡度写法一致），不宣称绝对法线正确。</p>
+          <p>斜光留证图在 <code>outputs/verify/</code>：<span class="mono">seam_grazing_correct.png</span>
+          能跨拼缝，<span class="mono">seam_grazing_wrong_scale.png</span> 与
+          <span class="mono">seam_grazing_axis_flipped.png</span> 暴露坏结果。命令行
+          <code>python3 -m hnm.cli all</code> 仅作辅助产出证据；日常验收请用本页图形入口。</p>
         </article>
       </div>
       <h2>界面启动方式</h2>

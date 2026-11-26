@@ -93,7 +93,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         url = urlparse(self.path)
-        if url.path not in ("/api/convert", "/api/join"):
+        if url.path not in ("/api/convert", "/api/join", "/api/verify", "/api/verification"):
             return self._send_json({"ok": False, "error": {"message": "未知 API"}}, 404)
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -103,6 +103,11 @@ class Handler(BaseHTTPRequestHandler):
             params = json.loads(raw.decode("utf-8"))
             if url.path == "/api/convert":
                 result = pipeline.convert_single(params)
+            elif url.path == "/api/verify":
+                result = pipeline.verify_scaling(params)
+            elif url.path == "/api/verification":
+                from .normal_validation import run_all_verification
+                result = {"ok": True, **run_all_verification()}
             else:
                 result = pipeline.join_islands(params)
             return self._send_json(result)
