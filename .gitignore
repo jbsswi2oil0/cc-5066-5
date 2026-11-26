@@ -23,3 +23,8 @@ __pycache__/
 *.log
 .env
 .env.*
+
+# 仓库内本地依赖与前端冒烟工具
+.pylibs/
+.tools/
+/.tools-get-pip.py

@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>高度纹理 → 法线贴图工作台</title>
+<link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M3 17l5-6 4 4 3-4 6 8H3z" fill="#5ac8ff"/>
+      <path d="M3 17l5-6 4 4 3-4" fill="none" stroke="#0b1220" stroke-width="1.4"/>
+    </svg>
+    <div>
+      <h1>高度纹理 → 法线贴图工作台</h1>
+      <p class="tagline">按实际尺寸与高度标尺求物理梯度 · 显式切线坐标约定 · 双岛镜像跨缝核对</p>
+    </div>
+  </div>
+  <nav class="toplinks">
+    <a href="/outputs/report.json" target="_blank" rel="noopener">内核核对报告 report.json</a>
+    <button id="btn-tests-info" class="ghost" type="button">运行测试</button>
+  </nav>
+</header>
+
+<div class="tabs" role="tablist">
+  <button class="tab active" data-tab="single" role="tab">单图转换</button>
+  <button class="tab" data-tab="islands" role="tab">双岛接缝合并</button>
+  <button class="tab" data-tab="learn" role="tab">原理 / 约定 / 启动</button>
+</div>
+
+<main>
+  <!-- ================= 单图 ================= -->
+  <section id="panel-single" class="panel active">
+    <div class="workspace">
+      <aside class="controls">
+        <fieldset>
+          <legend>1 · 输入高度纹理</legend>
+          <label class="field">
+            <span>内置样例（均带解析真值）</span>
+            <select id="s-sample"></select>
+          </label>
+          <label class="field">
+            <span>或上传自己的图片（本地解码后送内核）</span>
+            <input type="file" id="s-file" accept="image/*" />
+          </label>
+          <div class="source-row">
+            <img id="s-thumb" alt="输入缩略图" />
+            <div class="source-meta">
+              <div id="s-dims" class="mono">—</div>
+              <div id="s-sample-desc" class="hint"></div>
+            </div>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>2 · 通道与传递函数</legend>
+          <div class="grid2">
+            <label class="field"><span>高度通道</span>
+              <select id="s-channel">
+                <option value="r">R 红</option>
+                <option value="g">G 绿</option>
+                <option value="b">B 蓝</option>
+                <option value="a">A Alpha</option>
+                <option value="luma" selected>亮度 Rec.709</option>
+              </select>
+            </label>
+            <label class="field"><span>传递函数</span>
+              <select id="s-transfer">
+                <option value="linear" selected>linear（已是线性数据）</option>
+                <option value="srgb">sRGB EOTF 解码</option>
+                <option value="gamma">自定义 Gamma</option>
+              </select>
+            </label>
+          </div>
+          <label class="field" id="s-gamma-wrap" hidden><span>Gamma 指数（显示编码 c^γ）</span>
+            <input type="number" id="s-gamma" value="2.2" step="0.1" min="0.1" max="8" />
+          </label>
+          <label class="check"><input type="checkbox" id="s-invert" /> 高度反相（黑=高 / 白=低）</label>
+          <p class="hint warn" id="s-transfer-hint">
+            显示编码灰度 0.5 经 sRGB 解码后线性值只有约 0.214。若输入是颜色/显示截图，
+            请选 sRGB；高度数据贴图通常本身就是线性值，保持 linear。不能不经说明直接把编码亮度当线性高度。
+          </p>
+        </fieldset>
+
+        <fieldset>
+          <legend>3 · 实际表面尺度与高度标尺</legend>
+          <div class="grid3">
+            <label class="field"><span>纹理覆盖宽</span><input type="number" id="s-widthWorld" step="0.01" min="0.0001" /></label>
+            <label class="field"><span>高</span><input type="number" id="s-heightWorld" step="0.01" min="0.0001" /></label>
+            <label class="field"><span>单位</span><input type="text" id="s-unit" value="m" /></label>
+          </div>
+          <label class="field"><span>高度标尺 zScale：线性高度 0→1 对应的世界高度</span>
+            <input type="number" id="s-zScale" step="0.001" min="0.000001" />
+          </label>
+          <div class="grid2">
+            <label class="field"><span>模型拉伸 X <b id="s-stretchX-val">1.00×</b></span>
+              <input type="range" id="s-stretchX" min="0.25" max="4" step="0.05" value="1" />
+            </label>
+            <label class="field"><span>模型拉伸 Y <b id="s-stretchY-val">1.00×</b></span>
+              <input type="range" id="s-stretchY" min="0.25" max="4" step="0.05" value="1" />
+            </label>
+          </div>
+          <div id="s-pitch" class="pitch-readout mono">像素间距：—</div>
+        </fieldset>
+
+        <fieldset>
+          <legend>4 · 梯度算子与边界政策</legend>
+          <div class="grid2">
+            <label class="field"><span>梯度算子</span>
+              <select id="s-method">
+                <option value="central" selected>中心差分（解析核对基准）</option>
+                <option value="sobel">Sobel 3×3</option>
+              </select>
+            </label>
+            <label class="field"><span>边界政策</span>
+              <select id="s-boundary">
+                <option value="clamp" selected>clamp 非周期（边缘单侧差分）</option>
+                <option value="periodic">periodic 周期平铺</option>
+              </select>
+            </label>
+          </div>
+        </fieldset>
+
+        <fieldset>
+          <legend>5 · 渲染器坐标约定（显式）</legend>
+          <label class="field"><span>常用预设</span>
+            <select id="s-convention"></select>
+          </label>
+          <div class="checks3">
+            <label class="check"><input type="checkbox" id="s-flipX" /> 翻转 R / X</label>
+            <label class="check"><input type="checkbox" id="s-flipY" /> 翻转 G / Y</label>
+            <label class="check"><input type="checkbox" id="s-flipZ" /> 翻转 B / Z</label>
+          </div>
+          <p class="hint" id="s-conv-note"></p>
+          <p class="hint" id="s-frame-note"></p>
+        </fieldset>
+
+        <div class="action-row">
+          <button id="s-convert" class="primary" type="button">转换为法线贴图</button>
+          <span id="s-spinner" class="spinner" hidden></span>
+        </div>
+        <div id="s-feedback" class="feedback" role="alert" hidden></div>
+      </aside>
+
+      <section class="results">
+        <div class="result-tabs">
+          <button class="rtab active" data-rtab="normal">法线编码</button>
+          <button class="rtab" data-rtab="light">表面光照预览</button>
+          <button class="rtab" data-rtab="vectors">法线方向场</button>
+          <button class="rtab" data-rtab="metrics">尺度 / 误差指标</button>
+        </div>
+
+        <div class="rpanel active" data-rpanel="normal">
+          <div class="badge-row">
+            <span class="badge" id="s-conv-badge">—</span>
+            <a id="s-download-normal" class="button-like" download="normal.png">下载当前约定 PNG</a>
+            <a id="s-download-height" class="button-like ghost" download="height.png">下载线性高度 PNG</a>
+          </div>
+          <div class="imgframe checker">
+            <img id="s-normal" alt="生成的法线贴图" />
+          </div>
+          <p class="hint">标准 RGB8 编码 <span class="mono">RGB=255·(sign·n_canonical·0.5+0.5)</span>，
+            可直接接入真实渲染器的 Normal Map 节点；约定与符号见“指标”页。</p>
+        </div>
+
+        <div class="rpanel" data-rpanel="light">
+          <div class="light-controls">
+            <label>方位角 <b id="l-az-val">315°</b>
+              <input type="range" id="l-az" min="0" max="360" value="315" /></label>
+            <label>仰角 <b id="l-el-val">42°</b>
+              <input type="range" id="l-el" min="5" max="90" value="42" /></label>
+            <label>环境光 <b id="l-amb-val">0.22</b>
+              <input type="range" id="l-amb" min="0" max="1" step="0.02" value="0.22" /></label>
+            <label>高光 <b id="l-spec-val">0.25</b>
+              <input type="range" id="l-spec" min="0" max="1" step="0.05" value="0.25" /></label>
+            <a id="s-download-lit" class="button-like ghost" download="lit_preview.png">下载光照 PNG</a>
+          </div>
+          <div class="imgframe dark">
+            <canvas id="s-lightcanvas"></canvas>
+          </div>
+          <div id="s-hover" class="hover-readout mono">移动到预览上读取编码 RGB 与解码法线</div>
+        </div>
+
+        <div class="rpanel" data-rpanel="vectors">
+          <div class="imgframe dark">
+            <canvas id="s-vectorcanvas"></canvas>
+          </div>
+          <p class="hint">箭头为法线在 XY 平面的投影（红=X，绿=Y 方向分量），底图为同一编码法线。
+            翻转任一轴后箭头方向必须能由所选约定符号解释。</p>
+        </div>
+
+        <div class="rpanel" data-rpanel="metrics">
+          <div id="s-metrics" class="metrics"></div>
+        </div>
+      </section>
+    </div>
+  </section>
+
+  <!-- ================= 双岛 ================= -->
+  <section id="panel-islands" class="panel">
+    <div class="island-layout">
+      <div class="island-cards">
+        <fieldset class="island-card" id="i-card-a">
+          <legend>A 岛 · 带实际高度标尺</legend>
+          <div class="island-head">
+            <img id="i-a-thumb" src="/assets/source/island_A_calibrated.png" alt="A 岛" />
+            <div class="grid2 grow">
+              <label class="field"><span>物理宽 (m)</span><input type="number" id="i-a-width" value="0.5" step="0.01" min="0.001" /></label>
+              <label class="field"><span>物理高 (m)</span><input type="number" id="i-a-height" value="0.5" step="0.01" min="0.001" /></label>
+              <label class="field"><span>高度标尺 zA（m / 0–1）</span><input type="number" id="i-a-z" value="0.07984" step="0.0001" min="0.000001" /></label>
+              <label class="field"><span>通道/传递</span>
+                <select id="i-a-transfer"><option value="linear" selected>linear</option><option value="srgb">srgb</option></select></label>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="i-a-flipcols" /> 材料坐标中水平镜像定向（flipCols）</label>
+          <label class="check"><input type="checkbox" id="i-a-fliprows" /> 垂直翻转定向（flipRows）</label>
+        </fieldset>
+
+        <div class="seam-arrow" aria-hidden="true">接<br/>缝</div>
+
+        <fieldset class="island-card" id="i-card-b">
+          <legend>B 岛 · 仅相对起伏（标尺缺失）</legend>
+          <div class="island-head">
+            <img id="i-b-thumb" src="/assets/source/island_B_relative.png" alt="B 岛" />
+            <div class="grid2 grow">
+              <label class="field"><span>物理宽 (m)</span><input type="number" id="i-b-width" value="0.5" step="0.01" min="0.001" /></label>
+              <label class="field"><span>物理高 (m)</span><input type="number" id="i-b-height" value="0.5" step="0.01" min="0.001" /></label>
+              <label class="field required"><span>补入标尺 zB（m / 0–1，必填）</span>
+                <input type="number" id="i-b-z" placeholder="未知，需补入正数" step="0.0001" min="0.000001" /></label>
+              <label class="field"><span>通道/传递</span>
+                <select id="i-b-transfer"><option value="linear" selected>linear</option><option value="srgb">srgb</option></select></label>
+            </div>
+          </div>
+          <label class="check"><input type="checkbox" id="i-b-flipcols" /> 材料坐标中水平镜像定向（flipCols）</label>
+          <label class="check"><input type="checkbox" id="i-b-fliprows" /> 垂直翻转定向（flipRows）</label>
+          <button type="button" id="i-apply-a-z" class="linklike">由用户确认：让 B 套用 A 的标尺</button>
+        </fieldset>
+      </div>
+
+      <fieldset class="seam-options">
+        <legend>接缝核对与编码选项</legend>
+        <label class="field"><span>剖线高度位置 <b id="i-row-val">50%</b></span>
+          <input type="range" id="i-row" min="0.05" max="0.95" step="0.02" value="0.5" /></label>
+        <label class="field"><span>坡度一致容差</span>
+          <input type="number" id="i-tol" value="0.12" step="0.01" min="0.001" /></label>
+        <label class="field"><span>预期跨缝极性</span>
+          <select id="i-expect">
+            <option value="bump" selected>凸起 bump（核对没有翻成凹槽）</option>
+            <option value="groove">凹槽 groove</option>
+            <option value="any">不检查极性</option>
+          </select></label>
+        <label class="field"><span>边界政策（合并材料外缘）</span>
+          <select id="i-boundary"><option value="clamp" selected>clamp</option><option value="periodic">periodic</option></select></label>
+        <label class="field"><span>坐标约定</span><select id="i-convention"></select></label>
+        <label class="field"><span>B 相对预览临时强度 previewZ</span>
+          <input type="number" id="i-previewz" value="0.07984" step="0.001" min="0.000001" /></label>
+        <div class="action-col">
+          <button id="i-btn-relative" class="ghost" type="button">① 不需标尺：生成相对法线预览</button>
+          <button id="i-btn-physical" class="primary" type="button">② 补入 zB 后：物理合并并跨缝核对</button>
+        </div>
+        <div id="i-feedback" class="feedback" role="alert" hidden></div>
+      </fieldset>
+
+      <div class="island-results">
+        <div class="badge-row">
+          <span id="i-mode-badge" class="badge">尚未转换</span>
+          <span id="i-pass-badge" class="badge" hidden></span>
+          <a id="i-download-normal" class="button-like" hidden download="merged_normal.png">下载合并法线 PNG</a>
+          <a id="i-download-height" class="button-like ghost" hidden download="merged_height.png">下载物理高度 PNG</a>
+        </div>
+        <ul id="i-messages" class="messages"></ul>
+
+        <div class="result-tabs">
+          <button class="rtab active" data-irtab="normal">合并法线</button>
+          <button class="rtab" data-irtab="light">光照预览</button>
+          <button class="rtab" data-irtab="profile">跨缝剖线核对</button>
+        </div>
+        <div class="irpanel active" data-irpanel="normal">
+          <div class="imgframe checker"><img id="i-normal" alt="合并法线" /></div>
+        </div>
+        <div class="irpanel" data-irpanel="light">
+          <div class="light-controls compact">
+            <label>方位 <input type="range" id="il-az" min="0" max="360" value="315" /></label>
+            <label>仰角 <input type="range" id="il-el" min="5" max="90" value="42" /></label>
+          </div>
+          <div class="imgframe dark"><canvas id="i-lightcanvas"></canvas></div>
+        </div>
+        <div class="irpanel" data-irpanel="profile">
+          <div class="imgframe dark profile-frame"><canvas id="i-profilecanvas" width="1000" height="380"></canvas></div>
+          <div id="i-profile-nums" class="metrics"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 原理 ================= -->
+  <section id="panel-learn" class="panel">
+    <div class="learn">
+      <h2>数学模型与正确性边界</h2>
+      <div class="learn-grid">
+        <article>
+          <h3>1. 规范切线系</h3>
+          <p>内核所有解析法线都在唯一参考系中计算：<b>+X 朝画面右（列+），+Y 朝画面上（行−），
+          +Z 朝表面外</b>，右手系。表面 H(X,Y) 的法线为</p>
+          <pre>n = normalize(−∂H/∂X, −∂H/∂Y, 1)</pre>
+          <p>编码 RGB 时才乘上所选约定的轴符号。OpenGL/Blender/Unity 预设为 (+,+,+)；
+          DirectX/Unreal 为 (+,−,+)（绿通道朝下）。任何翻轴差异都由这组符号唯一解释。</p>
+        </article>
+        <article>
+          <h3>2. 实际尺度参与求导</h3>
+          <p>像素间距 dx=宽/列数、dy=高/行数，H=zScale·线性高度：</p>
+          <pre>∂H/∂X = zScale·(∂h/∂col)/dx
+∂H/∂Y = −zScale·(∂h/∂row)/dy</pre>
+          <p>因此只提高分辨率而覆盖同一物理表面时，差分与 dx 同步缩小，平均凹凸强度不变
+          （测试给出 64/128/256 分辨率下的数值）。模型拉伸倍数等价于增大 dx、dy，坡度按倍数反比变化。</p>
+        </article>
+        <article>
+          <h3>3. 传递函数不能省略</h3>
+          <p>sRGB 编码灰度 0.5 在线性光中约为 0.214。把显示编码亮度直接当线性高度会系统性夸大暗部坡度。
+          工具要求显式选择 linear / sRGB EOTF / γ，并在报告中保留错误示范图
+          <span class="mono">srgb_ramp_naive_no_decode_opengl.png</span>。</p>
+        </article>
+        <article>
+          <h3>4. 边界政策</h3>
+          <p><b>clamp</b>（非周期）：边缘使用单侧差分，绝不从对边借像素；
+          <b>periodic</b>：跨对边周期中心差分，适合可平铺纹理。边界台阶测试分别核对两种行为。</p>
+        </article>
+        <article>
+          <h3>5. 双岛镜像与标尺门禁</h3>
+          <p>两岛先按统一材料像素间距重采样，并按显式 flipCols/flipRows 定向，再拼成单一物理高度网格，
+          接缝是内部模板点，跨缝差分天然一致。zB 缺失时 <code>/api/join</code> 返回
+          <code>422 scale_required</code>：相对法线预览可用临时强度，物理合并必须先由用户补入标尺。
+          跨缝剖线给出左/缝/右三个坡度、残差、镜像相关与凸起/凹槽极性。</p>
+        </article>
+        <article>
+          <h3>6. 解析核对与交付物</h3>
+          <p>平面斜坡（机器精度一致）、正弦浮雕（角度误差与二阶收敛）、边界台阶、
+          8-bit 编解码往返误差、光照方向、分辨率不变性均有 unittest 覆盖：</p>
+          <pre>python3 -m unittest discover -s tests</pre>
+          <p>真实 PNG 贴图、光照预览与剖面图由 <code>python3 -m hnm.cli all</code> 生成到
+          <code>assets/</code> 与 <code>outputs/</code>，汇总数值见 <code>outputs/report.json</code>。</p>
+        </article>
+      </div>
+      <h2>界面启动方式</h2>
+      <pre>cd /workspace
+./start.sh                 # 自动准备 .pylibs 依赖并启动
+# 或：python3 -m hnm.server --host 127.0.0.1 --port 8765
+# 浏览器打开 http://127.0.0.1:8765/</pre>
+    </div>
+  </section>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>
